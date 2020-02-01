@@ -18,6 +18,7 @@
 　　　　関数以外の属性参照、書き込みに対応していません。
 　　　　イテレータとそうでないものをごっちゃにしています。
 　　　　pythonの文としてエラーが生じる場合には対応していません。
+　　　　classmethodに対応していません。
 　　　　組み込み関数ではascii,breakpoint,bytearray,bytes,
 　　　　callable,classmethod,compile,complex,delattr,dir,eval,
 　　　　exec,format,frozenset,getattr,globals,hasattr,help,id,
@@ -88,10 +89,16 @@ BuiltinConstants = {
 $gd = BuiltinFunctions.merge(BuiltinConstants)
 # 時間があったらクラス定義からやり直す, 辞書を作らずクラスメソッドを動的に呼び出す
 $gd[:Integer] = {
-    
+    as_integer_ratio: proc {[where($address)[$name], 1]},
+    bit_length: proc {|x| where($address)[$name].bit_length()},
+    from_bytes: nil, # 使えません
+    to_bytes: nil, # 使えません
 }
 $gd[:Float] = {
-    
+    as_integer_ratio: proc {f = where($address)[$name]; [f.numerator(), f.denominator()]},
+    fromhex: nil, # 使えません
+    hex: proc {x=where($address)[$name]; x>=0 ? "0x"+x.to_s(16) : "-0x"+-x.to_s(16)},
+    is_integer: proc {f = where($address)[$name]; f == f.to_i()},
 }
 $gd[:Array] = {
     append: proc {|x| where($address)[$name] += [x]},
@@ -117,7 +124,7 @@ $gd[:Pystr] = {
     find: proc {|sub| where($address)[$name].to_s().index(sub.to_s())},
     format: nil, # 使えません
     format_map: nil, # 使えません
-    index: proc {|sub| a = where($address)[$name].to_s().index(sub.to_s()) ? a : (raise ValueError.new("Inappropriate Value"))},
+    index: proc {|sub| a = where($address)[$name].to_s().index(sub.to_s()) ? a : (raise ValueError.new("inappropriate value"))},
     isalnum: proc {where($address)[$name].to_s().match?(/^\w+$/)},
     isalpha: proc {where($address)[$name].to_s().match?(/^[A-z]+$/)},
     isascii: proc {where($address)[$name].to_s().ascii_only?()},
@@ -137,7 +144,7 @@ $gd[:Pystr] = {
     partition: proc {|sep| where($address)[$name].to_s().partition(sep.to_s()).map() {|s| Pystr.new(s)}},
     replace: proc {|old, new| Pystr.new(where($address)[$name].to_s().gsub(old.to_s(), new.to_s()))},
     rfind: proc {|sub| where($address)[$name].to_s().rindex(sub.to_s())},
-    rindex: proc {|sub| a = where($address)[$name].to_s().rindex(sub.to_s()) ? a : (raise ValueError.new("Inappropriate Value"))},
+    rindex: proc {|sub| a = where($address)[$name].to_s().rindex(sub.to_s()) ? a : (raise ValueError.new("inappropriate value"))},
     rjust: proc {|width, padding=" "| Pystr.new(where($address)[$name].to_s().rjust(width, padding.to_s()))},
     rpartition: proc {|sep| where($address)[$name].to_s().rpartition(sep.to_s()).map() {|s| Pystr.new(s)}},
     rsplit: nil, # 使えません
@@ -153,7 +160,17 @@ $gd[:Pystr] = {
     zfill: nil # 使えません
 }
 $gd[:Hash] = {
-
+    clear: proc {where($address)[$name] = {}},
+    copy: proc {where($address)[$name].clone()},
+    fromkeys: nil, # 使えません
+    get: proc {|key, default=nil| x = where($address)[$name][key] ? x : default},
+    items: proc {where($address)[$name].each()},
+    keys: proc {where($address)[$name].each_key()},
+    pop: proc {|key, default=nil|w = where($address); h = w[$name]; v = h.delete(key); w[name] = h; v ? v : default},
+    popitem: proc {w = where($address); h = w[$name]; v = h.shift(); w[name] = h; v},
+    setdefault: proc {|key, default=nil| h = where($address)[$name]; (v = h[key]) ? v : (h[key] = default)},
+    update: proc {|other| w = where($address); w[$name] = w[$name].merge(other)},
+    values: proc {where($address)[$name].each_value()},
 }
 $address = []
 $name = "".to_sym()
@@ -192,6 +209,12 @@ class Pyfunc
         r = read_paragraph(@funcstr)
         $address.pop()
         r
+    end
+end
+
+class Array
+    def to_s()
+        "[#{map(&:to_s).join(", ")}]"
     end
 end
 
@@ -540,8 +563,8 @@ def rename_brackets(expr)
                 key = "h"+SecureRandom.alphanumeric()
                 d = {}
                 $1.split(",").map() do |kv|
-                    k, v = kv.split(":")
-                    d[k.strip().to_sym()] = read_expression(v)
+                    k, v = kv.split(":").map() {|x| read_expression(x)}
+                    d[k] = v
                 end
                 where($address)[key.to_sym()] = d
                 key
@@ -706,6 +729,7 @@ def bracket(line)
     )
     l.count("([{")-l.count(")]}")
 end
+
 
 File.open(filename, "r") do |fin|
     read_file(fin)
