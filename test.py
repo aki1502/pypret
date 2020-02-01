@@ -1,11 +1,7 @@
-for i in range(10):
-    print(i)
-    if i == 4: break
-    print(i)
-else:
-    print("Hello!")
-
-i=0
-while i<5:
-    print(i)
-    i=i+1
+a = [[1, 2, 3, 4, 5],
+     [2, 3, 4, 5, 6],
+     [3, 4, 5, 6, 7],
+     [4, 5, 6, 7, 8],
+     [5, 6, 7, 8, 9]]
+a[2][2] = 3.14
+print(a)
