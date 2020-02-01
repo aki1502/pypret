@@ -15,6 +15,7 @@
 　　　　複素数に対応していません。
 　　　　tuple,set,frozensetに対応していません。
 　　　　"""hoge""", '''fuga'''に対応していません。
+　　　　関数以外の属性参照、書き込みに対応していません。
 　　　　イテレータとそうでないものをごっちゃにしています。
 　　　　pythonの文としてエラーが生じる場合には対応していません。
 　　　　組み込み関数ではascii,breakpoint,bytearray,bytes,
@@ -32,6 +33,7 @@
 
 require "securerandom"
 
+require "pp"
 Debug = true
 
 filename = ARGV.shift
@@ -89,7 +91,7 @@ $gd[:Integer] = {
     
 }
 $gd[:Float] = {
-
+    
 }
 $gd[:Array] = {
     append: proc {|x| where($address)[$name] += [x]},
@@ -102,7 +104,7 @@ $gd[:Array] = {
     pop: proc {|i=-1| w = where($address); n = w[$name]; a = n.slice!(i); w[$name] = n; a},
     remove: proc {|x| w = where($address); n = w[$name]; i = n.index(x); n.slice!(i); w[$name] = n},
     reverse: proc {w = where($address); w[$name] = w[$name].reverse()},
-    sort: proc {|x=DefaultKey| w = where($address); w[$name] = w[$name].sort(&x).to_a()},
+    sort: proc {|x=DefaultKey| w = where($address); w[$name] = w[$name].sort_by(&x).to_a()},
 }
 $gd[:Pystr] = {
     capitalize: proc {Pystr.new(where($address)[$name].to_s().capitalize())},
@@ -154,12 +156,12 @@ $gd[:Hash] = {
 
 }
 $address = []
-$name = ""
+$name = "".to_sym()
 $args = {}
 
 class Pylamb
     def initialize(argstr, funcstr)
-        @argsyms = argstr.split(",").map() {|s| s.to_sym()}
+        @argsyms = argstr.split(",").map() {|s| s.strip().to_sym()}
         @funcstr = funcstr
         @key = ("l"+SecureRandom.alphanumeric()).to_sym()
     end
@@ -169,13 +171,15 @@ class Pylamb
         ld = Hash[*ary.flatten()]
         where($address)[@key] = ld
         $address << @key
-        read_expression(@funcstr)
+        r = read_expression(@funcstr)
+        $address.pop()
+        r
     end
 end
 
 class Pyfunc
     def initialize(argstr, funcstr)
-        @argsyms = argstr.split(",").map() {|s| s.to_sym()}
+        @argsyms = argstr.split(",").map() {|s| s.strip().to_sym()}
         @funcstr = funcstr
         @key = ("d"+SecureRandom.alphanumeric()).to_sym()
     end
@@ -185,7 +189,9 @@ class Pyfunc
         ld = Hash[*ary.flatten()]
         where($address)[@key] = ld
         $address << @key
-        read_paragraph(@funcstr)
+        r = read_paragraph(@funcstr)
+        $address.pop()
+        r
     end
 end
 
@@ -233,7 +239,7 @@ def read_file(file) #まだ;に対応してない
         bracket_level += bracket(line)
         if line.strip() == ""
             nil
-        elsif /^(.+?)\\\n$/ =~ line
+        elsif /^(.+?)\\$/ =~ line
             stmt += $1
             flag = true
         elsif bracket_level > 0
@@ -263,12 +269,13 @@ def read_paragraph(prgr) #まだ;に対応してない
     flag = false
     bracket_level = 0
     prgr.split("\n").each() do |line|
+        line += "\n"
         line.sub!(/#.*$/, "")
         line.delete_prefix!(" "*4)
         bracket_level += bracket(line)
         if line.strip() == ""
             nil
-        elsif  /^(.+?)\\\n$/ =~ line
+        elsif  /^(.+?)\\$/ =~ line
             stmt += $1
             flag = true
         elsif bracket_level > 0
@@ -386,7 +393,7 @@ def read_statement(stmt)
         stmt.split("\n").each() do |line|
             case line
             when /^for (.+?) in (.+):(.*?)$/
-                argsyms = $1.split(",").map() {|s| s.to_sym()}
+                argsyms = $1.split(",").map() {|s| s.strip().to_sym()}
                 iterable = read_expression($2)
                 prgr = "    #{$3.lstrip()}\n"
             when /^else\s*?:(.*?)$/
@@ -459,11 +466,9 @@ def rename_brackets(expr)
                 key = "m"+SecureRandom.alphanumeric()
                 argstrs = $3.split(",").find_all() {|x| x!=""}
                 args = argstrs.map() {|x| read_expression(x)}
-                $name = ("n"+SecureRandom.alphanumeric()).to_sym()
-                where($address)[$name] = dol1 = read_expression($1)
-                m = $gd[dol1.class()::name.to_sym()][$2.to_sym()]
+                $name = $1.to_sym()
+                m = $gd[read_expression($1).class()::name.to_sym()][$2.to_sym()]
                 where($address)[key.to_sym()] = m.call(*args)
-                $address.pop()
                 key
             end
         end
@@ -475,7 +480,6 @@ def rename_brackets(expr)
                 argstrs = $2.split(",").find_all() {|x| x!=""}
                 args = argstrs.map() {|x| read_expression(x)}
                 where($address)[key.to_sym()] = read_atom($1).call(*args)
-                $address.pop()
                 key
             end
         end
@@ -604,7 +608,7 @@ def read_expression(expr)
         else
             raise expr
         end
-    when /^(.+?)(\+|\-)(.+)$/ # add, sub
+    when /^([^\+\-]+?)(\+|\-)(.+)$/ # add, sub
         case $2
         when "+"
             read_expression($1) + read_expression($3)
@@ -613,7 +617,7 @@ def read_expression(expr)
         else
             raise expr
         end
-    when /^([^*\/%]+?)(\*|\/|\/\/|%)([^*\/%]+)$/ # mul, div, mod
+    when /^([^*\/%]+?)(\*|\/|\/\/|%)(.+)$/ # mul, div, mod
         case $2
         when "*"
             read_expression($1) * read_expression($3)
@@ -657,9 +661,9 @@ def read_atom(atom)
     when /^'(.*?)'$/
         Pystr.new($1)
     when /^([\d]+?)$/
-        $1.to_i
+        $1.to_i()
     when /^([\d\.]+?)$/
-        $1.to_f
+        $1.to_f()
     # attribute
     when /^(.+)\.(.+?)$/
         dol1 = read_expression($1)
@@ -680,10 +684,10 @@ end
 
 def what(address, key)
     address.length().downto(0) do |i|
-        v = where(address[0...i])[key]
+        v = where(address[0..i])[key]
         return v if v
     end
-    nil
+    where([])[key]
 end
 
 def what_with_address(address, key)
