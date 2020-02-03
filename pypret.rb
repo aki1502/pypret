@@ -8,7 +8,7 @@
 操作法: ruby pypret.rb [Pythonの文法で書かれたプレーンテキスト]
 動機: 似た課題を提出しそこねたため。
 アピールポイント: 手間が掛かっている。
-自己評価: 1000000000点
+自己評価: 99点
 改良すべき点: 下記のとおり機能に制限があるため、本物に寄せたい。
 注意点: import文,raise文,try文,class文,yield文,async文,with文,
 　　　　global文,nonlocal文には対応していません。
@@ -19,17 +19,18 @@
 　　　　イテレータとそうでないものをごっちゃにしています。
 　　　　pythonの文としてエラーが生じる場合には対応していません。
 　　　　classmethodに対応していません。
+　　　　可変長引数、キーワード引数に対応していません。
 　　　　組み込み関数ではascii,breakpoint,bytearray,bytes,
 　　　　callable,classmethod,compile,complex,delattr,dir,eval,
 　　　　exec,format,frozenset,getattr,globals,hasattr,help,id,
 　　　　isinstance,issubclass,iter,locals,
 　　　　memoryview,next,object,open,property,repr,set,setattr,
-　　　　slice,staticmethod,super,tuple,varsには対応していません。
+　　　　slice,staticmethod,super,tuple,type,varsには対応していません。
 　　　　複数の記法に対応した関数ではそのうち一つしか使用できません。
 　　　　printの引数には機能に制限があります。
 　　　　組み込み定数ではNotImplementedと...(Ellipsis)には対応していません。
 　　　　インデントは4字固定です。
-　　　　その他実装漏れはいくらでもあると思われます、予めご了承下さい。
+　　　　その他バグ、実装漏れはいくらでもあると思われます、予めご了承下さい。
 =end
 
 require "securerandom"
@@ -39,44 +40,42 @@ Debug = true
 
 filename = ARGV.shift
 
-
 NullValues = [0, 0.0, [], {}, "", false, nil]
 
 DefaultKey = proc {|x| x}
 
 BuiltinFunctions = {
-    abs: proc {|x| x.abs},
-    all: proc {|x| (x.map() {|y| !NullValues.include?(y)}).all?},
-    any: proc {|x| (x.map() {|y| !NullValues.include?(y)}).any?},
-    bin: proc {|x| x>=0 ? "0b"+x.to_s(2) : "-0b"+-x.to_s(2)},
+    abs: proc {|x| x.abs()},
+    all: proc {|x| (x.map() {|y| !NullValues.include?(y)}).all?()},
+    any: proc {|x| (x.map() {|y| !NullValues.include?(y)}).any?()},
+    bin: proc {|x| Pystr.new(x>=0 ? "0b"+x.to_s(2) : "-0b"+-x.to_s(2))},
     bool: proc {|x=false| !NullValues.include?(x)},
-    chr: proc {|x| x.chr()},
+    chr: proc {|x| Pystr.new(x.chr())},
     dict: proc {|**kwargs| kwargs},
     divmod: proc {|x, a| x.divmod(a)},
     enumerate: proc {|x, start=0| x.each().with_index(start)},
-    filter: proc {|func, iter| iter.find_all(&func)},
+    filter: proc {|func, iter| iter.find_all() {|x| func.call(x)}},
     float: proc {|x=0.0| x.to_f()},
     hash: proc {|x| x.hash()},
-    hex: proc {|x| x>=0 ? "0x"+x.to_s(16) : "-0x"+-x.to_s(16)},
-    input: proc {|x=""| print(x); gets.to_s()},
+    hex: proc {|x| Pystr.new(x>=0 ? "0x"+x.to_s(16) : "-0x"+-x.to_s(16))},
+    input: proc {|x=""| print(x); Pystr.new(gets().chomp())},
     int: proc {|x=0| x.to_i()},
     len: proc {|x| x.length()},
     list: proc {|x=[]| x.to_a()},
-    map: proc {|func, *iters| iters.zip().map(&func)},
-    max: proc {|*x, key:DefaultKey, default:nil| if x[0].is_a?(Array) then x=x[0] end; (default ? x+[default] : x).max(&key)},
-    min: proc {|*x, key:DefaultKey, default:nil| if x[0].is_a?(Array) then x=x[0] end; (default ? x+[default] : x).min(&key)},
-    oct: proc {|x| x>=0 ? "0o"+x.to_s(8) : "-0o"+-x.to_s(8)},
+    map: proc {|func, *iters| iters.transpose().map() {|x| func.call(*x)}},
+    max: proc {|*x, key:DefaultKey, default:nil| x = x[0] if x[0].is_a?(Array); (default ? x+[default] : x).max_by(&key)},
+    min: proc {|*x, key:DefaultKey, default:nil| x = x[0] if x[0].is_a?(Array); (default ? x+[default] : x).min_by(&key)},
+    oct: proc {|x| Pystr.new(x>=0 ? "0o"+x.to_s(8) : "-0o"+-x.to_s(8))},
     ord: proc {|x| x.ord()},
     pow: proc {|base, exp, mod=nil| base.pow(exp, modulo=mod)},
-    print: proc {|*o| print(*o) ;print("\n")},
-    range: proc {|*s| case s.length() when 1; 0...s[0] when 2; s[0]...s[1] else (s[0]...s[1]).step(s[2]) end},
+    print: proc {|*o| print(o.map(&:to_s).join(" ")+"\n")},
+    range: proc {|*s| (case s.length() when 1; 0...s[0] when 2; s[0]...s[1] else (s[0]...s[1]).step(s[2]) end).to_a()},
     reversed: proc {|x| x.reverse()},
     round: proc {|x| x.round()},
     sorted: proc {|x| x.sort()},
-    str: proc {|x=""| Pystr.new(x.to_s())},
-    sum: proc {|x, init=0| x.sum(init)},
-    type: proc {|x| x.type()},
-    zip: proc {|*x| x[0].zip(*x[1..-1])},
+    str: proc {|x=""| Pystr.new(x)},
+    sum: proc {|*x, init:0| x.sum(init)},
+    zip: proc {|*x| l = x.map(&:length).min(); (x.map() {|y| y.take(l)}).transpose()},
 }
 
 BuiltinConstants = {
@@ -134,7 +133,7 @@ $gd[:Pystr] = {
     islower: proc {where($address)[$name].to_s().match?(/^[a-z]+$/)},
     isprintable: nil, # 使えません
     isspace: proc {where($address)[$name].to_s().match?(/^\s+$/)},
-    istitle: proc {(where($address)[$name].to_s().split().map {|w| w.match?(/^[A-Z]/)}).all?},
+    istitle: proc {(where($address)[$name].to_s().split().map() {|w| w.match?(/^[A-Z]/)}).all?},
     isupper: proc {where($address)[$name].to_s().match?(/^[A-Z]+$/)},
     join: proc {|iterable| iterable.join(where($address)[$name])},
     ljust: proc {|width, padding=" "| Pystr.new(where($address)[$name].to_s().ljust(width, padding.to_s()))},
@@ -149,8 +148,8 @@ $gd[:Pystr] = {
     rpartition: proc {|sep| where($address)[$name].to_s().rpartition(sep.to_s()).map() {|s| Pystr.new(s)}},
     rsplit: nil, # 使えません
     rstrip: proc {Pystr.new(where($address)[$name].to_s().rstrip())},
-    split: proc {|sep=nil, maxsplit=0| where($address)[$name].to_s().split(sep.to_s(), maxsplit)},
-    splitlines: proc {|keepends=false| where($address)[$name].to_s().split(/[\n\r\v\f\x1c\x1d\x1e]/)},
+    split: proc {|sep=" ", maxsplit=0| where($address)[$name].to_s().split(sep.to_s(), maxsplit).map() {|x| Pystr.new(x)}},
+    splitlines: proc {|keepends=false| where($address)[$name].to_s().split(/[\n\r\v\f\x1c\x1d\x1e]/).map() {|x| Pystr.new(x)}},
     startswith: proc {|prefix| where($address)[$name].to_s().start_with?(prefix)},
     strip: proc {Pystr.new(where($address)[$name].to_s().strip())},
     swapcase: proc {Pystr.new(where($address)[$name].to_s().swapcase())},
@@ -182,7 +181,8 @@ $answer = nil
 
 class Pylamb
     def initialize(argstr, funcstr)
-        @argsyms = argstr.split(",").map() {|s| s.strip().to_sym()}
+        argstrs = argstr.split(",").map(&:strip).find_all() {|s| s!=""}
+        @argsyms = argstrs.map(&:to_sym)
         @funcstr = funcstr
         @key = ("l"+SecureRandom.alphanumeric()).to_sym()
     end
@@ -200,7 +200,8 @@ end
 
 class Pyfunc
     def initialize(argstr, funcstr)
-        @argsyms = argstr.split(",").map() {|s| s.strip().to_sym()}
+        argstrs = argstr.split(",").map(&:strip).find_all() {|s| s!=""}
+        @argsyms = argstrs.map(&:to_sym)
         @funcstr = funcstr
         @key = ("d"+SecureRandom.alphanumeric()).to_sym()
     end
@@ -210,9 +211,13 @@ class Pyfunc
         ld = Hash[*ary.flatten()]
         where($address)[@key] = ld
         $address << @key
-        r = read_suite(@funcstr)
+        read_suite(@funcstr)
         $address.pop()
-        r
+        if $return
+            $return = false
+            return $answer
+        end
+        nil
     end
 end
 
@@ -224,7 +229,11 @@ end
 
 class Pystr < Array
     def initialize(str)
-        self.replace(str.chars())
+        self.replace(str.to_s().chars())
+    end
+
+    def [](index)
+        Pystr.new(self.to_s()[index])
     end
 
     def +(other)
@@ -245,7 +254,11 @@ class Pystr < Array
     end
 
     def to_s()
-        self.join()
+        join()
+    end
+
+    def to_i()
+        to_s().to_i()
     end
 
     freeze
@@ -277,8 +290,10 @@ def read_file(file) #まだ;に対応してない
             flag = false
         elsif /^else\s*:/ =~ line
             stmt += line
+            flag = false
         elsif /^elif\s*.+:/ =~ line
             stmt += line
+            flag = false
         elsif flag
             read_statement(stmt+line)
             stmt = ""
@@ -312,10 +327,13 @@ def read_suite(suite) #まだ;に対応してない
             flag = true
         elsif /^    .+?/ =~ line
             stmt += line
-        elsif /^else\s.+?/ =~ line
+            flag = false
+        elsif /^else\s*.+?/ =~ line
             stmt += line
-        elsif /^elif\s.+?/ =~ line
+            flag = false
+        elsif /^elif\s*.+?/ =~ line
             stmt += line
+            flag = false
         elsif flag
             read_statement(stmt+line)
             stmt = ""
@@ -331,7 +349,7 @@ end
 # 文を読み解く。
 def read_statement(stmt)
     return nil if $return || $break || $continue
-    stmt.lstrip!()
+    stmt.strip!()
     /^(.+?)\s+(.*)$/ =~ stmt+" "
     case $1
     when "assert"
@@ -348,8 +366,8 @@ def read_statement(stmt)
             where($address)[k] = nil
         end
     when "return"
-        $return = true
         $answer = read_expression($2)
+        $return = true
     when "break"
         $break = true
     when "continue"
@@ -359,7 +377,7 @@ def read_statement(stmt)
         suite = ""
         stmt.split("\n").each() do |line|
             case line
-            when /^if(.+?):(.*)$/
+            when /^if(.+):(.*?)$/
                 dol2 = $2
                 if read_expression("bool(#{$1})")
                     if /^\s*$/ =~ dol2
@@ -368,8 +386,9 @@ def read_statement(stmt)
                         return read_statement(dol2)
                     end
                 end
-            when /^elif(.+?):(.*)$/
+            when /^elif(.+):(.*?)$/
                 return read_suite(suite) if flag
+                flag = false
                 dol2 = $2
                 if read_expression("bool(#{$1})")
                     if /^\s*$/ =~ dol2
@@ -378,8 +397,9 @@ def read_statement(stmt)
                         return read_statement(dol2)
                     end
                 end
-            when /^else\s*:(.*)$/
+            when /^else\s*?:(.*)$/
                 return read_suite(suite) if flag
+                flag = false
                 dol2 = $1
                 if /^\s*$/ =~ dol2
                     flag = true
@@ -389,31 +409,31 @@ def read_statement(stmt)
             else
                 suite += line+"\n" if flag
             end
-            read_suite(suite) if flag
         end
+        read_suite(suite) if flag
     when "while"
         flag = false
         expr = ""
         suite = ""
         stmt.split("\n").each() do |line|
             case line
-            when /^while\s+(.+?):(.*)$/
+            when /^while\s+(.+):(.*?)$/
                 flag = true
                 expr = "bool(#{$1})"
-                suite = $2
-            when /^else\s*:(.*)$/
-                while read_expression(expr) do
+                suite = "    #{$2.strip()}\n"
+            when /^else\s*?:(.*)$/
+                while read_expression(expr)
                     $continue = false
                     read_suite(suite)
                 end
                 flag = false
-                suite = "    #{$1.lstrip()}\n"
+                suite = "    #{$1.strip()}\n"
             else
                 suite += line+"\n"
             end
         end
         if flag
-            while read_expression(expr) do
+            while read_expression(expr)
                 $continue = false
                 read_suite(suite)
             end
@@ -426,30 +446,35 @@ def read_statement(stmt)
         argsyms = []
         iterable = []
         suite = ""
+        multiple = false
         stmt.split("\n").each() do |line|
             case line
             when /^for (.+?) in (.+):(.*?)$/
                 flag = true
-                argsyms = $1.split(",").map() {|s| s.strip().to_sym()}
+                argstrs = $1.split(",").map(&:strip).find_all() {|s| s!=""}
+                argsyms = argstrs.map(&:to_sym)
                 iterable = read_expression($2)
-                suite = "    #{$3.lstrip()}\n"
+                suite = "    #{$3.strip()}\n"
+                multiple = $1.include?(",")
             when /^else\s*?:(.*?)$/
-                iterable.each() do |*args|
+                iterable.each() do |args|
                     $continue = false
+                    args = [args] unless multiple
                     argsyms.zip(args) do |k, v|
                         where($address)[k] = v
                     end
                     read_suite(suite)
                 end
                 flag = false
-                suite = "    #{$1.lstrip()}\n"
+                suite = "    #{$1.strip()}\n"
             else
                 suite += line+"\n"
             end
         end
         if flag
-            iterable.each() do |*args|
+            iterable.each() do |args|
                 $continue = false
+                args = [args] unless multiple
                 argsyms.zip(args) do |k, v|
                     where($address)[k] = v
                 end
@@ -474,48 +499,70 @@ def read_statement(stmt)
             end
         end
         where($address)[funcname.to_sym()] = Pyfunc.new(argstr, suite)
-        a, $answer = $answer, nil
-        return a
     else
         w = where($address)
         case stmt
         when /^(.+?)(\*\*=|\/\/=|>>=|<<=)(.+)$/ # 累算代入文(3字のもの)
-            case $2
+            augop = $2
+            ser, val = $1.strip(), read_expression($3)
+            h, k = assignment_hash_and_key(ser)
+            case augop
             when "**="
-                w[read_expression($1)] **= read_expression($3)
+                h[k] **= val
             when "//="
-                w[read_expression($1)] /= read_expression($3)
+                h[k] /= val
             when ">>="
-                w[read_expression($1)] >>= read_expression($3)
+                h[k] >>= val
             when "<<="
-                w[read_expression($1)] <<= read_expression($3)
+                h[k] <<= val
             end
-        when /^(.+?)(\+=|\-=|\*=|\/=|%=|&=|\^=|\|=)(.+)$/  # 累算代入文(2字のもの)
-            case $2
+        when /^(.+?)(\+=|\-=|\*=|\/=|%=|&=|\^=|\|=)(.+)$/ # 累算代入文(2字のもの)
+            augop = $2 
+            ser, val = $1.strip(), read_expression($3)
+            h, k = assignment_hash_and_key(ser)
+            case augop
             when "+="
-                w[read_expression($1)] += read_expression($3)
+                h[k] += val
             when "-="
-                w[read_expression($1)] -= read_expression($3)
+                h[k] -= val
             when "*="
-                w[read_expression($1)] *= read_expression($3)
+                h[k] *= val
             when "/="
-                w[read_expression($1)] /= read_expression($3).to_f()
+                h[k] /= val.to_f()
             when "%="
-                w[read_expression($1)] %= read_expression($3)
+                h[k] %= val
             when "&="
-                w[read_expression($1)] &= read_expression($3)
+                h[k] &= val
             when "^="
-                w[read_expression($1)] ^= read_expression($3)
+                h[k] ^= val
             when "|="
-                w[read_expression($1)] |= read_expression($3)
+                h[k] |= val
             end
-        when /^.+?(=.+?)+$/ # 代入文 # まだ多重代入文に対応していない
+        when /^[^=]+?(=[^=].*?[^=]|=[^=])+$/ # 代入文 # まだ*に対応していない
             serval = stmt.split("=").map(&:strip)
-            val = read_expression(serval[-1])
+            unite = []
+            serval.each_with_index() do |ser, i|
+                unite << i if ser == ""
+            end
+            unite.reverse().each() do |i|
+                serval[i-1..i+1] = "#{serval[i-1]}==#{serval[i+1]}"
+            end
+            val = read_expression(serval[-1].include?(",") ? "[#{serval[-1]}]" : serval[-1])
             serval[0..-2].each() do |x|
                 case x
-                when /^(.+)\[(.+?)\]$/ # まだ arr[i][j] = v みたいなのに対応してない
+                when /^(.+)\[(.+?)\]$/
                     read_expression($1)[read_expression($2)] = val
+                when /,/
+                    argstrs = x.split(",").map(&:strip).find_all() {|k| k!=""}
+                    argsyms = argstrs.map(&:to_sym)
+                    argsyms.zip(val) do |k, v|
+                        case k
+                        when /^(.+)\[(.+?)\]$/
+                            read_expression($1)[read_expression($2)] = v
+                        else
+                            where($address)[k] = v
+                        end
+                    end
                 else
                     where($address)[x.to_sym()] = val
                 end
@@ -527,13 +574,22 @@ def read_statement(stmt)
     nil
 end
 
+def assignment_hash_and_key(ser)
+    case ser
+    when /^(.+)\[(.+?)\]$/
+        return read_expression($1), read_expression($2)
+    else
+        return where($address), ser.to_sym()
+    end
+end
+
 # '', "", (), [], {}を内側から先に評価し、dictに格納していく。
-def rename_brackets(expr)
+def rename_brackets(expr) # 結果から言うとこれは失敗だった、億劫がらずにはじめに記号列に分解すべきだった。
     return nil if expr == nil
     
     if /["']/ =~ expr
         # 文字列リテラルを先に評価し、dictに格納する。
-        expr = expr.gsub(
+        expr.gsub!(
             /(?=(?:(?:([\"\'`])(?:(?:(?!\1)[^\\\n])|(?:\\[^\n])|(?:\1\1))*?\1)(?:(?:(?!\1)[^\\\n])|(?:\\[^\n])|(?:\1\1))*?)+\n?$)(?:\1(?:(?:(?!\1)[^\\\n])|(?:\\[^\n])|(?:\1\1))*?(?:\1))/
         ) do |matched|
             key = "c"+SecureRandom.alphanumeric()
@@ -543,54 +599,88 @@ def rename_brackets(expr)
     end
 
     while /[\(\[\{]/ =~ expr
-        # method_callを先に評価し、dictに格納する。# まだキーワード引数に対応していない # まだ*に対応していない
-        while /([A-Za-z_][\w\._]*)\.([A-Za-z_][\w]*?)\(([^\(\)\[\]\{\}]*?)\)/ =~ expr
-            expr = expr.gsub(/([A-Za-z_][\w\._]*)\.([A-Za-z_][\w]*?)\(([^\(\)\[\]\{\}]*?)\)/) do
-                key = "m"+SecureRandom.alphanumeric()
-                argstrs = $3.split(",").find_all() {|x| x!=""}
-                args = argstrs.map() {|x| read_expression(x)}
-                $name = $1.to_sym()
-                m = $gd[read_expression($1).class()::name.to_sym()][$2.to_sym()]
-                where($address)[key.to_sym()] = m.call(*args)
-                key
+        while /[A-Za-z_][\w\._]*\([^\(\)\[\]\{\}]*?\)/ =~ expr
+            # method_callを先に評価し、dictに格納する。
+            while /([A-Za-z_][\w\._]*)\.([A-Za-z_][\w]*?)\(([^\(\)\[\]\{\}]*?)\)/ =~ expr
+                expr.gsub!(/([A-Za-z_][\w\._]*)\.([A-Za-z_][\w]*?)\(([^\(\)\[\]\{\}]*?)\)/) do
+                    key = "m"+SecureRandom.alphanumeric()
+                    argstrs = $3.split(",").find_all() {|x| x!=""}
+                    args = []
+                    kwargs = {}
+                    argstrs.each() do |x|
+                        if x.include?("=")
+                            if x[x.index("=")+1] == "="
+                                args << read_expression(x)
+                            else
+                                k, v = x.split("=", 2)
+                                kwargs[k.strip().to_sym()] = read_expression(v)
+                            end
+                        elsif x.include?("*")
+                            read_expression(x).each() do |v|
+                                args << v
+                            end
+                        else
+                            args << read_expression(x)
+                        end
+                    end
+                    args << kwargs unless kwargs.empty?()
+                    m = $gd[read_expression($1).class()::name.to_sym()][$2.strip().to_sym()]
+                    $name = $1.to_sym()
+                    where($address)[key.to_sym()] = m.call(*args)
+                    key
+                end
             end
-        end
 
-        # function_callを先に評価し、dictに格納する。
-        while /([A-Za-z_][\w]*)\(([^\(\)\[\]\{\}]*?)\)/ =~ expr
-            expr = expr.gsub(/([A-Za-z_][\w]*)\(([^\(\)\[\]\{\}]*?)\)/) do
+            # function_callを先に評価し、dictに格納する。
+            expr.sub!(/([A-Za-z_][\w_]*)\(([^\(\)\[\]\{\}]*?)\)/) do
                 key = "f"+SecureRandom.alphanumeric()
                 argstrs = $2.split(",").find_all() {|x| x!=""}
-                args = argstrs.map() {|x| read_expression(x)}
+                args = []
+                kwargs = {}
+                argstrs.each() do |x|
+                    if x.include?("=")
+                        if x[x.index("=")+1] == "="
+                            args << read_expression(x)
+                        else
+                            k, v = x.split("=", 2)
+                            kwargs[k.strip().to_sym()] = read_expression(v)
+                        end
+                    elsif x.strip().start_with?("*")
+                        read_expression(x).each() do |v|
+                            args << v
+                        end
+                    else
+                        args << read_expression(x)
+                    end
+                end
+                args << kwargs unless kwargs.empty?()
                 where($address)[key.to_sym()] = read_atom($1).call(*args)
                 key
             end
         end
 
         # ()内を先に評価し、dictに格納する。
-        while /\(([^\(\)\[\]\{\}]+?)\)/ =~ expr
-            expr = expr.gsub(/\(([^\(\)\[\]\{\}]+?)\)/) do
-                key = "b"+SecureRandom.alphanumeric()
-                where($address)[key.to_sym()] = read_expression($1)
-                key
-            end
+        expr.sub!(/\(([^\(\)\[\]\{\}]+?)\)/) do
+            key = "b"+SecureRandom.alphanumeric()
+            where($address)[key.to_sym()] = read_expression($1)
+            key
         end
 
         # x[index]を先に評価し、dictに格納する。
-        while /([a-zA-Z_][\w._]*)\[([^\(\)\[\]\{\}]+?)\]/ =~ expr
-            expr = expr.gsub(/([A-Za-z_][\w._]*)\[([^\(\)\[\]\{\}]+?)\]/) do
+        while /([a-zA-Z_][\w\._]*)\[([^\(\)\[\]\{\}]+?)\]/ =~ expr
+            expr.gsub!(/([A-Za-z_][\w\._]*)\[([^\(\)\[\]\{\}]+?)\]/) do
                 key = "i"+SecureRandom.alphanumeric()
                 dol1 = read_atom($1)
                 where($address)[key.to_sym()] =
                     case $2
                     when /^(.*?)\:(.*?)\:(.*?)$/
                         dol2 = read_expression($1) || 0
-                        dol3 = read_expression($2)-1 || -1
+                        dol3 = (read_expression($2) || 0)-1
                         dol4 = read_expression($3) || 1
-                        dol1[dol2..dol3].each_slice(dol4).map() {|x| x[0]}
+                        dol1[dol2..dol3].each_slice(dol4).map(&:first)
                     when /^(.*?)\:(.*?)$/
                         dol2 = read_expression($1) || 0
-                        dol3 = read_expression($2)-1 || -1
+                        dol3 = (read_expression($2) || 0)-1
                         dol1[dol2..dol3]
                     when /^(.+?)$/
                         case dol1
@@ -609,50 +699,52 @@ def rename_brackets(expr)
         end
 
         # [expressions...](list)を先に評価し、dictに格納する。
-        while /\[([^\(\)\[\]\{\}]*?)\]/ =~ expr
-            expr = expr.gsub(/\[([^\(\)\[\]\{\}]*?)\]/) do
-                key = "a"+SecureRandom.alphanumeric()
-                dol1 = $1
-                where($address)[key.to_sym()] = 
-                    case dol1
-                    when /(.+) for (.+) in (.+) if (.+)/
-                        ke = "c"+SecureRandom.alphanumeric()
-                        argsyms = $2.split(",").map() {|s| s.strip().to_sym()}
-                        where($address)[ke] = {}
-                        $address << ke
-                        arr = []
-                        read_expression($3).each() do |*args|
-                            argsyms.zip(args) do |k, v|
-                                where($address)[k] = v
-                            end
-                            arr << read_expression($1) if read_expression("bool(#{$4})")
+        expr.sub!(/\[([^\(\)\[\]\{\}]*?)\]/) do
+            key = "a"+SecureRandom.alphanumeric()
+            dol1 = $1
+            where($address)[key.to_sym()] = 
+                case dol1
+                when /^(.+) for (.+) in (.+) if (.+)$/ # 内包表記
+                    ke = "c"+SecureRandom.alphanumeric()
+                    multiple = $2.include?(",")
+                    argstrs = $2.split(",").map(&:strip).find_all() {|s| s!=""}
+                    argsyms = argstrs.map(&:to_sym)
+                    where($address)[ke] = {}
+                    $address << ke
+                    arr = []
+                    read_expression($3).each() do |args|
+                        args = [args] unless multiple
+                        argsyms.zip(args) do |k, v|
+                            where($address)[k] = v
                         end
-                        $address.pop()
-                        arr
-                    when /(.+) for (.+) in (.+)/
-                        ke = "c"+SecureRandom.alphanumeric()
-                        argsyms = $2.split(",").map() {|s| s.strip().to_sym()}
-                        where($address)[ke] = {}
-                        $address << ke
-                        arr = []
-                        read_expression($3).each() do |*args|
-                            argsyms.zip(args) do |k, v|
-                                where($address)[k] = v
-                            end
-                            arr << read_expression($1)
-                        end
-                        $address.pop()
-                        arr
-                    else
-                        dol1.split(",").map() {|x| read_expression(x)}
+                        arr << read_expression($1) if read_expression("bool(#{$4})")
                     end
-                key
-            end
+                    $address.pop()
+                    arr
+                when /^(.+) for (.+) in (.+)$/ # 内包表記
+                    ke = "c"+SecureRandom.alphanumeric()
+                    multiple = $2.include?(",")
+                    argstrs = $2.split(",").map(&:strip).find_all() {|s| s!=""}
+                    argsyms = argstrs.map(&:to_sym)
+                    where($address)[ke] = {}
+                    $address << ke
+                    arr = []
+                    read_expression($3).each() do |*args|
+                        argsyms.zip(args) do |k, v|
+                            where($address)[k] = v
+                        end
+                        arr << read_expression($1)
+                    end
+                    arr
+                else
+                    dol1.split(",").map() {|x| read_expression(x)}
+                end
+            key
         end
 
         # {key: value...}(dict)を先に評価し、dictに格納する。
         while /\{([^\(\)\[\]\{\}]*?)\}/ =~ expr
-            expr = expr.gsub(/\{([^\(\)\[\]\{\}]*?)\}/) do
+            expr.gsub!(/\{([^\(\)\[\]\{\}]*?)\}/) do
                 key = "h"+SecureRandom.alphanumeric()
                 d = {}
                 $1.split(",").map() do |kv|
@@ -669,31 +761,32 @@ end
 
 # 式を読み解く。
 def read_expression(expr)
+    return false if $break
     return nil if expr == nil
     expr = rename_brackets(expr.strip())
 
     case expr
     when /^lambda (.+?):(.+)/ #lambda
         Pylamb.new($1, $2)
-    when /^(.+?) if (.+?) else (.+)$/ # if_else
+    when /^(.+) if (.+?) else (.+?)$/ # if_else
         read_expression("bool(#{$2})") ? read_expression($1) : read_expression($3)
-    when /^(.+?) or (.+)$/ # or
-        read_expression($1) || read_expression($2)
-    when /^(.+?) and (.+?)$/ # and
-        read_expression($1) && read_expression($2)
+    when /^(.+) or (.+)$/ # or
+        read_expression("bool(#{$1})") ? read_expression($1) : read_expression($2)
+    when /^(.+) and (.+?)$/ # and
+        read_expression("bool(#{$1})") ? read_expression($2) : read_expression($1)
     when /^not (.+?)$/ # not
-        !read_expression($1)
-    when /^(.+?)(\sin\s|\snot\s+?in\s|\sis\s|\sis\s+?not\s|<=|<|>=|>|!=|==)(.+)$/
+        !read_expression("bool(#{$1})")
+    when /^(.+)(\sin\s|\snot\s+?in\s|\sis\s|\sis\s+?not\s|<=|<|>=|>|!=|==)(.+?)$/
         dol1, dol3 = $1, $3
         case $2.strip()
-        when "in"
-            read_expression(dol3).include?(read_expression(dol1))
         when /not\s+?in/
             !read_expression(dol3).include?(read_expression(dol1))
-        when "is"
-            read_expression(dol1).equal?(read_expression(dol3))
+        when "in"
+            read_expression(dol3).include?(read_expression(dol1))
         when /is\s+?not/
             !read_expression(dol1).equal?(read_expression(dol3))
+        when "is"
+            read_expression(dol1).equal?(read_expression(dol3))
         when "<"
             read_expression(dol1) < read_expression(dol3)
         when "<="
@@ -709,13 +802,13 @@ def read_expression(expr)
         else
             raise expr
         end
-    when /^(.+?)\|(.+)$/ # |
+    when /^(.+)\|(.+?)$/ # |
         read_expression($1) | read_expression($2)
-    when /^(.+?)\^(.+)$/ # ^
+    when /^(.+)\^(.+?)$/ # ^
         read_expression($1) ^ read_expression($2)
-    when /^(.+?)&(.+)$/ # &
+    when /^(.+)&(.+?)$/ # &
         read_expression($1) & read_expression($2)
-    when /^(.+?)[(<<)(>>)](.+)$/ # <<, >>
+    when /^(.+)[(<<)(>>)](.+?)$/ # <<, >>
         case $2
         when "<<"
             read_expression($1) << read_expression($3)
@@ -724,7 +817,7 @@ def read_expression(expr)
         else
             raise expr
         end
-    when /^([^\+\-]+?)(\+|\-)(.+)$/ # add, sub
+    when /^(.+)(\+|\-)(.+?)$/ # add, sub
         case $2
         when "+"
             read_expression($1) + read_expression($3)
@@ -733,7 +826,7 @@ def read_expression(expr)
         else
             raise expr
         end
-    when /^([^*\/%]+?)(\*|\/|\/\/|%)(.+)$/ # mul, div, mod
+    when /^(.*[^\*\/%])(\*|\/|\/\/|%)([^\*\/%].*?)$/ # mul, div, mod
         case $2
         when "*"
             read_expression($1) * read_expression($3)
@@ -757,7 +850,7 @@ def read_expression(expr)
         else
             raise expr
         end
-    when /^(.+)\*\*(.+?)$/ # exp
+    when /^(.+?)\*\*(.+)$/ # exp
         read_expression($1) ** read_expression($2)
     when /^\s*$/ # blank
         nil
@@ -822,7 +915,6 @@ def bracket(line)
     )
     l.count("([{")-l.count(")]}")
 end
-
 
 File.open(filename, "r") do |fin|
     read_file(fin)
