@@ -19,7 +19,7 @@
 　　　　イテレータとそうでないものをごっちゃにしています。
 　　　　pythonの文としてエラーが生じる場合には対応していません。
 　　　　classmethodに対応していません。
-　　　　可変長引数、キーワード引数、デフォルト引数に対応していません。
+　　　　キーワード引数、デフォルト引数に対応していません。
 　　　　組み込み関数ではascii,breakpoint,bytearray,bytes,
 　　　　callable,classmethod,compile,complex,delattr,dir,eval,
 　　　　exec,format,frozenset,getattr,globals,hasattr,help,id,
@@ -33,7 +33,6 @@
 =end
 
 require "securerandom"
-
 
 filename = ARGV.shift
 
@@ -175,12 +174,11 @@ $return = false
 $break = false
 $continue = false
 $answer = nil
-$deco = []
 
 
 class Integer
-    def div(other)
-        other.is_a?(Float) ? super(other).to_f() : super(other)
+    def to_string()
+        to_s()
     end
 end
 
@@ -188,21 +186,37 @@ class Float
     def div(other)
         super(other).to_f()
     end
+
+    def to_string()
+        to_s()
+    end
 end
 
 class Array
     def to_s()
-        "[#{map(&:to_s).join(", ")}]"
+        "[#{map(&:to_string).join(", ")}]"
     end
 
     def foldr(m = nil, &o)
-        reverse().inject(m) {|m, i| m ? o.call(i, m) : i}
+        reverse().inject(m) {|m, i| m ? o[i, m] : i}
+    end
+
+    def to_string()
+        to_s()
     end
 end
 
 class Hash
     def each()
         each_key()
+    end
+
+    def to_s()
+        "{#{(to_a().map() {|k, v| "#{k.to_string()}: #{v.to_string()}"}).join(", ")}}"
+    end
+
+    def to_string()
+        to_s()
     end
 end
 
@@ -224,7 +238,7 @@ class String
     # 詰まった書き方の文字列にゆとりを与える
     def spacia()
         gsub(
-            /([\)\]\}\d])([^\.\{\}\[\]\(\) \n,])/,
+            /([\)\]\}\d])([^\.\{\}\[\]\(\) \n,\d])/,
             '\1 \2',
         ).gsub(
             /(\W(?:False|else|pass|None|break|in|True|is|return|and|continue|for|lambda|def|while|assert|del|not|elif|if|or))([\(\{\[])/,
@@ -234,12 +248,20 @@ class String
 end
 
 class NilClass
+    def to_string()
+        "None"
+    end
+
     def to_s()
         "None"
     end
 end
 
 class TrueClass
+    def to_string()
+        "True"
+    end
+
     def to_s()
         "True"
     end
@@ -250,6 +272,10 @@ class TrueClass
 end
 
 class FalseClass
+    def to_string()
+        "False"
+    end
+
     def to_s()
         "False"
     end
@@ -263,15 +289,18 @@ end
 # lambda式の中身、関数を文字列の形で保持する。
 class Pylamb
     def initialize(argstr, funcstr)
-        argstrs = argstr.split(",").map(&:strip).find_all() {|s| s!=""}
-        @argsyms = argstrs.map(&:to_sym)
+        @argstrs = argstr.split(",").map(&:strip).find_all() {|s| s!=""}
         @funcstr = funcstr
-        @key = ("l"+SecureRandom.alphanumeric()).to_sym()
+        @key = ("(lambda)"+SecureRandom.alphanumeric()).to_sym()
     end
     
     def call(*args)
-        ary = [@argsyms, args].transpose()
-        ld = Hash[*ary.flatten()]
+        if i = @argstrs.index() {|a| a.include?("*")}
+            args = args[0...i] + [args[i..-1]]
+        end
+        argsyms = (@argstrs.map() {|s| s.delete_prefix("*")}).map(&:to_sym)
+        ary = [argsyms, args].transpose()
+        ld = Hash[*ary.flatten(1)]
         where($address)[@key] = ld
         $address << @key
         r = read_expression(@funcstr)
@@ -282,19 +311,21 @@ end
 
 # 関数定義の中身、関数を文字列の形で保持する。
 class Pyfunc
-    def initialize(argstr, funcstr)
-        argstrs = argstr.split(",").map(&:strip).find_all() {|s| s!=""}
-        @argsyms = argstrs.map(&:to_sym)
+    def initialize(funcname, argstr, funcstr)
+        @argstrs = argstr.split(",").map(&:strip).find_all() {|s| s!=""}
         @funcstr = funcstr
-        @key = ("d"+SecureRandom.alphanumeric()).to_sym()
+        @key = "(#{funcname})".to_sym()
     end
 
     def call(*args)
-        ary = [@argsyms, args].transpose()
-        ld = Hash[*ary.flatten()]
+        if i = @argstrs.index() {|a| a.include?("*")}
+            args = args[0...i] + [args[i..-1]]
+        end
+        argsyms = (@argstrs.map() {|s| s.delete_prefix("*")}).map(&:to_sym)
+        ary = [argsyms, args].transpose()
+        ld = Hash[*ary.flatten(1)]
         where($address)[@key] = ld
         $address << @key
-        p $address
         read_suite(@funcstr)
         $address.pop()
         if $return
@@ -309,19 +340,23 @@ end
 class Pycomp
     def initialize(compstr)
         @compstr = compstr
-        @key = ("c"+SecureRandom.alphanumeric()).to_sym()
+        @key = ("(comprehension)"+SecureRandom.alphanumeric()).to_sym()
     end
 
     def call()
         where($address)[@key] = {}
         $address << @key
-        /^(.+?) (for .+? in .+)$/ =~ @compstr[1...-1]
-        r = recursion($1, $2, "True")
+        /^(.+?) (for .+? in .+)$/ =~ @compstr[1..-2]
+        if @compstr[0] == "["
+            r = l_recursion($1, $2, "True")
+        else
+            r = d_recursion($1, $2, "True")
+        end
         $address.pop()
         r
     end
 
-    def recursion(head, rest, cond)
+    def l_recursion(head, rest, cond)
         case rest
         when /^for (.+?) in (.+?)( (?:if|for) .+)?$/
             multiple = $1.include_outside?(",")
@@ -334,14 +369,41 @@ class Pycomp
                 argsyms.zip(args) do |k, v|
                     where($address)[k] = v
                 end
-                arr += recursion(head, rest, cond)
+                arr += l_recursion(head, rest, cond)
             end
             arr
         when /^if (.+?)( (?:if|for) .+)?$/
             rest = $2 ? $2.strip() : ""
-            recursion(head, rest, "#{cond}&bool(#{$1})")
+            l_recursion(head, rest, "#{cond} and #{$1}")
         else
-            read_expression(cond) ? [read_expression(head)] : []
+            read_expression("bool(#{cond})") ? [read_expression(head)] : []
+        end
+    end
+
+    def d_recursion(head, rest, cond)
+        case rest
+        when /^for (.+?) in (.+?)( (?:if|for) .+)?$/
+            multiple = $1.include_outside?(",")
+            argstrs = $1.split(",").map(&:strip).find_all() {|s| s!=""}
+            argsyms = argstrs.map(&:to_sym)
+            rest = $3 ? $3.strip() : ""
+            hash = {}
+            read_expression($2).each() do |args|
+                args = [args] unless multiple
+                argsyms.zip(args) do |k, v|
+                    where($address)[k] = v
+                end
+                hash.merge!(d_recursion(head, rest, cond))
+            end
+            hash
+        when /^if (.+?)( (?:if|for) .+)?$/
+            rest = $2 ? $2.strip() : ""
+            d_recursion(head, rest, "#{cond} and #{$1}")
+        else
+            /(.+?):(.+)/ =~ head
+            hash = {}
+            hash[read_expression($1)] = read_expression($2) if read_expression("bool(#{cond})")
+            hash
         end
     end
 end
@@ -375,6 +437,10 @@ class Pystr < Array
 
     def to_s()
         join()
+    end
+
+    def to_string()
+        "'#{self}'"
     end
 
     def to_i()
@@ -634,13 +700,15 @@ def read_statement(stmt)
                 suite += line+"\n"
             end
         end
-        d, $deco = $deco, []
-        where($address)[funcname.to_sym()] = d.foldr(Pyfunc.new(argstr, suite), &:call)
+        d = where($address)[:"@"] || []
+        where($address)[:"@"] = nil
+        where($address)[funcname.to_sym()] = d.foldr(Pyfunc.new(funcname, argstr, suite), &:call)
     else
         w = where($address)
         case stmt
         when /^@(.+)$/ # decorator
-            $deco << read_expression($1)
+            w = where($address)
+            w[:"@"] = (w[:"@"] ? w[:"@"] : []) + [read_expression($1)]
         when /^(.+?)(\*\*=|\/\/=|>>=|<<=)(.+)$/ # 累算代入文(3字のもの)
             augop = $2
             ser, val = $1.strip(), read_expression($3)
@@ -678,7 +746,7 @@ def read_statement(stmt)
                 h[k] |= val
             end
         else 
-            if stmt.include_outside?("=") # 代入文 # *に対応していない
+            if stmt.include_outside?("=") # 代入文
                 serval = stmt.split("=").map(&:strip)
                 unite = []
                 serval.each_with_index() do |ser, i|
@@ -700,8 +768,14 @@ def read_statement(stmt)
                         read_expression($1)[read_expression($2)] = val
                     elsif x.include_outside?(",")
                         argstrs = x.split(",").map(&:strip).find_all() {|k| k!=""}
-                        argsyms = argstrs.map(&:to_sym)
-                        argsyms.zip(val) do |k, v|
+                        if i = argstrs.index() {|a| a.include?("*")}
+                            l = val.length()-argstrs.length()+1
+                            va = val[0...i] + [val[i, l]] + val[i+l..-1] # func(0, 1, 2) -> def(*arg)
+                        else
+                            va = val
+                        end
+                        argsyms = (argstrs.map() {|s| s.delete_prefix("*")}).map(&:to_sym)
+                        argsyms.zip(va) do |k, v|
                             case k
                             when /^(.+)\[(.+?)\]$/
                                 read_expression($1)[read_expression($2)] = v
@@ -729,27 +803,51 @@ def rename_quotes(expr)
     expr.gsub!(
         /(?=(?:(?:([\"\'`])(?:(?:(?!\1)[^\\\n])|(?:\\[^\n])|(?:\1\1))*?\1)(?:(?:(?!\1)[^\\\n])|(?:\\[^\n])|(?:\1\1))*?)+\n?$)(?:\1(?:(?:(?!\1)[^\\\n])|(?:\\[^\n])|(?:\1\1))*?(?:\1))/
     ) do |matched|
-        key = "c"+SecureRandom.alphanumeric()
+        key = "quote$"+SecureRandom.alphanumeric()
         where($address)[key.to_sym()] = read_atom(matched)
         key
     end
 
+    expr.sub!(/lambda (.+?):(.+)/) do #lambda
+        key = "lambda$"+SecureRandom.alphanumeric()
+        where($address)[key.to_sym()] = Pylamb.new($1, $2)
+        key
+    end if expr.include_outside?("lambda ")
+
+    expr.sub!(/^(.+) if (.+?) else (.+?)$/) do # if_else
+        key = "condop$"+SecureRandom.alphanumeric()
+        where($address)[key.to_sym()] = read_expression("bool(#{$2})") ? read_expression($1) : read_expression($3)
+        key
+    end if expr.include_outside?(" if ")
+
+    expr.sub!(/^(.+) or (.+?)$/) do # or
+        key = "or$"+SecureRandom.alphanumeric()
+        where($address)[key.to_sym()] = read_expression("bool(#{$1})") ? read_expression($1) : read_expression($2)
+        key
+    end if expr.include_outside?(" or ")
+
+    expr.sub!(/^(.+) and (.+?)$/) do # and
+        key = "and$"+SecureRandom.alphanumeric()
+        where($address)[key.to_sym()] = read_expression("bool(#{$1})") ? read_expression($2) : read_expression($1)
+        key
+    end if expr.include_outside?(" and ")
+
     # (), [], {}を先に評価し、dictに格納していく。
     while /[\(\[\{]/ =~ expr
         expr = rename_brackets(expr)
-        expr = rename_parentheses(expr)
         expr = rename_braces(expr)
+        expr = rename_parentheses(expr)
     end
     expr
 end
 
 def rename_parentheses(expr)
     while /\([^\(\)\[\]\{\}]*?\)/ =~ expr
-        while /[A-Za-z_][\w\._]*\([^\(\)\[\]\{\}]*?\)/ =~ expr
-            while /([A-Za-z_][\w\._]*)\.([A-Za-z_][\w]*?)\(([^\(\)\[\]\{\}]*?)\)/ =~ expr
+        while /[A-Za-z_$][\w\.$]*\([^\(\)\[\]\{\}]*?\)/ =~ expr
+            while /([A-Za-z_$][\w\.$]*)\.([A-Za-z_$][\w$]*?)\(([^\(\)\[\]\{\}]*?)\)/ =~ expr
                 # method_callを先に評価し、dictに格納する。
-                expr.gsub!(/([A-Za-z_][\w\._]*)\.([A-Za-z_][\w]*?)\(([^\(\)\[\]\{\}]*?)\)/) do
-                    key = "m"+SecureRandom.alphanumeric()
+                expr.gsub!(/([A-Za-z_$][\w\.$]*)\.([A-Za-z_$][\w$]*?)\(([^\(\)\[\]\{\}]*?)\)/) do
+                    key = "method$"+SecureRandom.alphanumeric()
                     argstrs = $3.split(",").find_all() {|x| x!=""}
                     args = []
                     kwargs = {}
@@ -759,7 +857,7 @@ def rename_parentheses(expr)
                                 args << read_expression(x)
                             else
                                 k, v = x.split("=", 2)
-                                kwargs[k.strip().to_sym()] = read_expression(v)
+                                kwargs[Pystr.new(k.strip())] = read_expression(v)
                             end
                         elsif x.strip().start_with?("*")
                             read_expression(x).each() do |v|
@@ -778,8 +876,9 @@ def rename_parentheses(expr)
             end
 
             # function_callを先に評価し、dictに格納する。
-            expr.sub!(/([A-Za-z_][\w_]*)\(([^\(\)\[\]\{\}]*?)\)/) do
-                key = "f"+SecureRandom.alphanumeric()
+            expr.sub!(/([A-Za-z_$][\w_$]*)\(([^\(\)\[\]\{\}]*?)\)/) do
+                key = "function$"+SecureRandom.alphanumeric()
+                funcname = $1
                 argstrs = $2.split(",").find_all() {|x| x!=""}
                 args = []
                 kwargs = {}
@@ -787,14 +886,14 @@ def rename_parentheses(expr)
                     if x.include_outside?("=")
                         if x[x.index("=")+1] =~ /\=/
                             args << read_expression(x)
-                        elsif
-                            x[x.index("=")-1] =~ /!|>|</
+                        elsif x[x.index("=")-1] =~ /!|>|</
+                            args << read_expression(x)
                         else
                             k, v = x.split("=", 2)
-                            kwargs[k.strip().to_sym()] = read_expression(v)
+                            kwargs[Pystr.new(k.strip())] = read_expression(v)
                         end
                     elsif x.strip().start_with?("*")
-                        read_expression(x).each() do |v|
+                        read_expression(x[1..-1]).each() do |v|
                             args << v
                         end
                     else
@@ -802,14 +901,14 @@ def rename_parentheses(expr)
                     end
                 end
                 args << kwargs unless kwargs.empty?()
-                where($address)[key.to_sym()] = read_atom($1).call(*args)
+                where($address)[key.to_sym()] = read_atom(funcname).call(*args)
                 key
             end
         end
 
         # ()内を先に評価し、dictに格納する。
         expr.sub!(/\(([^\(\)\[\]\{\}]+?)\)/) do
-            key = "b"+SecureRandom.alphanumeric()
+            key = "parentheses$"+SecureRandom.alphanumeric()
             where($address)[key.to_sym()] = read_expression($1)
             key
         end
@@ -819,19 +918,19 @@ end
 
 def rename_brackets(expr)
     while /\[[^\[\]\{\}]*?\]/ =~ expr
-        while /[a-zA-Z_][\w\._]*\[[^\[\]\{\}]+?\]/ =~ expr || /\[[^\[\]]+? for [^\[\]]+\]/ =~ expr
+        while /[a-zA-Z_$][\w\._$]*\[[^\[\]\{\}]+?\]/ =~ expr || /\[[^\[\]]+? for [^\[\]]+\]/ =~ expr
             while /\[[^\[\]]+? for [^\[\]]+\]/ =~ expr
                 # リスト内包表記を先に評価し、dictに格納する。
                 expr.gsub!(/\[[^\[\]]+? for [^\[\]]+\]/) do |matched|
-                    key = "a"+SecureRandom.alphanumeric()
+                    key = "list_comprehension$"+SecureRandom.alphanumeric()
                     where($address)[key.to_sym()] = Pycomp.new(matched)
                     key+"()"
                 end
             end
 
             # x[index]を先に評価し、dictに格納する。
-            expr.gsub!(/([A-Za-z_][\w\._]*)\[([^\[\]\{\}]+?)\]/) do
-                key = "i"+SecureRandom.alphanumeric()
+            expr.gsub!(/([A-Za-z_$][\w\._$]*)\[([^\[\]\{\}]+?)\]/) do
+                key = "index$"+SecureRandom.alphanumeric()
                 dol1 = read_atom($1)
                 where($address)[key.to_sym()] =
                     case $2
@@ -845,14 +944,7 @@ def rename_brackets(expr)
                         dol3 = (read_expression($2) || 0)-1
                         dol1[dol2..dol3]
                     when /^(.+?)$/
-                        case dol1
-                        when Array
-                            dol1[read_expression($1)]
-                        when Hash
-                            dol1[read_expression($1).to_sym()]
-                        else
-                            return dol1
-                        end
+                        dol1[read_expression($1)]
                     else
                         raise expr
                     end
@@ -862,7 +954,7 @@ def rename_brackets(expr)
 
         # [expressions...](list)を先に評価し、dictに格納する。
         expr.gsub!(/\[([^\[\]\{\}]*?)\]/) do
-            key = "a"+SecureRandom.alphanumeric()
+            key = "list$"+SecureRandom.alphanumeric()
             dol1 = rename_parentheses($1)
             where($address)[key.to_sym()] = dol1.split(",").map() {|x| read_expression(x)}
             key
@@ -872,12 +964,19 @@ def rename_brackets(expr)
 end
 
 def rename_braces(expr)
-    while /\{([^\(\)\[\]\{\}]*?)\}/ =~ expr
-        # dict内包表記を先に評価し、dictに格納する。 # まだ実装していない。
+    while /\{([^\{\}]*?)\}/ =~ expr
+        while /\{[^\{\}]+? for [^\{\}]+\}/ =~ expr
+            # dict内包表記を先に評価し、dictに格納する。
+            expr.gsub!(/\{[^\{\}]+? for [^\{\}]+\}/) do |matched|
+                key = "dict_comprehension$"+SecureRandom.alphanumeric()
+                where($address)[key.to_sym()] = Pycomp.new(matched)
+                key+"()"
+            end
+        end
 
         # {key: value...}(dict)を先に評価し、dictに格納する。
         expr.gsub!(/\{([^\(\)\[\]\{\}]*?)\}/) do
-            key = "h"+SecureRandom.alphanumeric()
+            key = "dict$"+SecureRandom.alphanumeric()
             d = {}
             $1.split(",").map() do |kv|
                 k, v = kv.split(":").map() {|x| read_expression(x)}
@@ -897,17 +996,9 @@ def read_expression(expr)
     expr = rename_quotes(expr.strip())
 
     case expr
-    when /^lambda (.+?):(.+)/ #lambda
-        Pylamb.new($1, $2)
-    when /^(.+) if (.+?) else (.+?)$/ # if_else
-        read_expression("bool(#{$2})") ? read_expression($1) : read_expression($3)
-    when /^(.+) or (.+)$/ # or
-        read_expression("bool(#{$1})") ? read_expression($1) : read_expression($2)
-    when /^(.+) and (.+?)$/ # and
-        read_expression("bool(#{$1})") ? read_expression($2) : read_expression($1)
     when /^not (.+?)$/ # not
         !read_expression("bool(#{$1})")
-    when /^(.+)(\sin\s|\sis\s|<=|<|>=|>|!=|==)(.+?)$/ # 所属や同一性のテストを含む比較
+    when /^(.+)(\sin\s|\sis\s|<|>|!=|==)(.+?)$/ # 所属や同一性のテストを含む比較
         dol1, dol3 = $1, $3
         case $2.strip()
         when "in"
@@ -925,13 +1016,17 @@ def read_expression(expr)
                 read_expression(dol1).equal?(read_expression(dol3))
             end
         when "<"
-            read_expression(dol1) < read_expression(dol3)
-        when "<="
-            read_expression(dol1) <= read_expression(dol3)
+            if dol3[0] != "="
+                read_expression(dol1) < read_expression(dol3)
+            else
+                read_expression(dol1) <= read_expression(dol3[1..-1])
+            end
         when ">"
-            read_expression(dol1) > read_expression(dol3)
-        when ">="
-            read_expression(dol1) >= read_expression(dol3)
+            if dol3[0] != "="
+                read_expression(dol1) > read_expression(dol3)
+            else
+                read_expression(dol1) >= read_expression(dol3[1..-1])
+            end
         when "!="
             read_expression(dol1) != read_expression(dol3)
         when "=="
@@ -1022,17 +1117,13 @@ end
 
 # global_dict(変数全体のハッシュ)のaddressに示された番地の中身(主に局所変数のハッシュ)を呼び出す。
 def where(address)
-    d = $gd
-    address.each() do |a|
-        d = d[a]
-    end
-    d
+    address.inject($gd, &:[])
 end
 
 # global_dict(変数全体のハッシュ)のaddressに示された番地のから参照できる中身を呼び出す。
 def what(address, key)
     address.length().downto(0) do |i|
-        v = where(address[0..i])[key]
+        v = where(address[0...i])[key]
         return v if v
     end
     where([])[key]
